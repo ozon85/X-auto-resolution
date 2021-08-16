@@ -96,6 +96,7 @@ IFS=$BIFS
 
 function OnMonitorEvent(){
 #echo Debug: OnMonitorEvent >&2
+sleep 5 #Some TV's report the edid file after a few seconds. 
 GetNewConnected                      
 for OutputFolder in $NewConnected;do
   GetOutputForOutputfolder;GetConfigFileForOutputfolder
