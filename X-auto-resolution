@@ -148,7 +148,7 @@ function WriteConfigFile(){
 touch "$ConfigFile"||return 1
 [ -n "$Resolution" ]&& echo resolution "$Resolution" "$RefreshRate">"$ConfigFile"
   
-echo success save config file `basename "$ConfigFile"`
+echo success save config file "$ConfigFile"
 }
 
 function Save(){
@@ -194,7 +194,6 @@ DeleteConfigFile||return $?
 }
 
 
-#Разбор параметров
 check_common_commands()
 {
     while [ $# -gt 0 ] ; do
@@ -224,15 +223,10 @@ check_common_commands()
 check_common_commands "$@"
 
 #debug
-echo Debug: PID=$$ >&2
-echo Debug: ConfigDir="$ConfigDir" >&2
+#echo Debug: PID=$$ >&2
+#echo Debug: ConfigDir="$ConfigDir" >&2
 #
 [ -n "$ApplyOnly" ]&&{ OnMonitorEvent;exit; }
 [ -n "$OnlyNew" ]&&GetCurrentConnected
 
 Watching
-#определяем подключенные мониторы
-# для всех подключенных перечитываем ConfigFile
-
-#+lisetining и определяем подключенные мониторы и определяем вновь подключенные с обновлением списка
-#Запуск события подключения для видео вывода
