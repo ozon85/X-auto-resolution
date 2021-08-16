@@ -1,0 +1,238 @@
+#!/bin/bash
+ProjectName='X-auto-resolution'
+DRM='/sys/class/drm/*'
+UseFullValues='Monitor name:|Manufacturer:|Maximum image size:|ASCII string:|Serial number:'
+
+ConfigDir=~/.config/$ProjectName
+mkdir -p "$ConfigDir"||ConfigDir='./'
+cd "$ConfigDir" #for reading ConfigFile
+
+function Notify_First_Second(){
+[ -z $Quet ]&&notify-send "$First" "$Second"
+}
+
+function MD5SUM(){ MD5Hash=`md5sum "$1"`;echo ${MD5Hash%% *}; }
+
+function resolution(){
+#echo Debug: resolution 1=$1 2=$2 3=$3 >&2
+K=$(cvt $1 $2 $3)||return 1
+K=${K#*Modeline };K=${K//\"/}
+xrandr --newmode $K 2>/dev/null
+K=${K%% *} #get name for mode
+
+  xrandr --addmode $Output $K
+  xrandr --output $Output --mode $K && Second=$Second' '$K&&
+  echo mode $K applied to $Output "($MonitorName)"
+}
+
+function GetConfigFileForOutputfolder(){
+EDIDfile=$OutputFolder/edid
+[ -r "$EDIDfile" ]||return 1
+ConfigFile=`MD5SUM "$EDIDfile"`||return 1
+}
+
+function GetOutputForOutputfolder(){
+Output=$(basename $OutputFolder)
+Output=${Output#card*-}
+[ -z "$Output" ]&&return 1
+Output=${Output%%-*}${Output##*-}
+}
+
+
+function GetCurrentConnected(){
+#echo Debug: GetCurrentConnected  >&2
+xrandr &>/dev/null
+CurrentConnected=''
+for A in $DRM/status;do
+  [ 'connected' = `cat "$A"` ]&& CurrentConnected=$CurrentConnected`dirname "$A"`$'\n'
+done
+echo Current Connected:
+echo "$CurrentConnected"
+}
+
+function GetNewConnected(){
+#echo Debug: GetNewConnected
+PrevConnected=$CurrentConnected
+#echo 'Prev Connected:'
+#echo "$PrevConnected"
+NewConnected=''
+GetCurrentConnected
+for A in $CurrentConnected;do
+grep $A <<<$PrevConnected &>/dev/null || NewConnected=$NewConnected$A$'\n'
+done
+echo 'New Connected:'
+echo "$NewConnected"
+}
+
+function GetMonitorNameFromOutputFolder(){
+#echo Debug: GetMonitorNameFromOutputFolder  >&2
+MonitorName=`edid-decode $OutputFolder/edid|grep -E "Monitor name:"`
+MonitorName=${MonitorName#*Monitor name: }
+}
+
+function RunConfigFile(){
+#echo Debug: RunConfigFile "$ConfigFile"  >&2
+while read ConfigLine;do $ConfigLine;done < "$ConfigFile"
+}
+
+function GetResolutionAndRefreshRateOfOutput(){
+#echo Debug: GetResolutionAndRefreshRateOfOutput
+Resolution='';RefreshRate=''
+BIFS=$IFS
+IFS=''
+while [ -z "$Resolution" -a -z "$RefreshRate" ]&& read K;do
+  if [ "$Output" = "${K%% *}" ];then
+    Resolution=$(echo "$K"|grep -i "$Output"' connected'|grep -oE '[0-9]+x[0-9]+');
+	Resolution=${Resolution//x/ };
+    while [ -z "$RefreshRate" ]&& read K&& [ ' ' = ${K:0:1} ];do
+	  [[ "$K" =~ '*' ]]&&{ #echo Debug: $K >&2;
+	    K=${K%%\**};RefreshRate=${K##* };IFS=$BIFS;return; }
+	done
+  fi
+done<<<`xrandr`
+IFS=$BIFS
+[ -z "$Resolution" ]&&return 1
+ }
+
+function OnMonitorEvent(){
+#echo Debug: OnMonitorEvent >&2
+GetNewConnected                      
+for OutputFolder in $NewConnected;do
+  GetOutputForOutputfolder;GetConfigFileForOutputfolder
+  GetMonitorNameFromOutputFolder
+  #read config if exist
+  [ -r "$ConfigFile" ]&&
+  RunConfigFile &&
+  First=$ProjectName && Second=$MonitorName"($Output) "$Second &&
+  Notify_First_Second || 
+  { echo 'no config found for' $MonitorName "($Output)"; }
+done
+}
+
+function Watching(){
+#echo Debug: Watching  >&2
+  #start watching
+stdbuf -i0 -o0 -e0 udevadm monitor -u -s drm|{ read;read;read
+  while read;do
+    OnMonitorEvent
+  done
+}
+}
+
+function List(){
+#echo Debug: List of connected monitors:$'\n'  >&2
+GetCurrentConnected
+for OutputFolder in $CurrentConnected;do
+GetOutputForOutputfolder
+GetResolutionAndRefreshRateOfOutput
+GetMonitorNameFromOutputFolder
+GetConfigFileForOutputfolder;
+[ -r "$ConfigFile" ]||ConfigFile=''
+echo $Output "($MonitorName)" $ConfigFile':'
+echo resolution "$Resolution" "$RefreshRate"
+edid-decode $EDIDfile|grep -E "$UseFullValues"
+echo ''
+done
+}
+
+function FindOutputFolderForTargetOutput(){
+#echo Debug: FindOutputFolderForTargetOutput TargetOutput=$TargetOutput  >&2
+for OutputFolder in $DRM;do
+  GetOutputForOutputfolder
+  grep -i "^$TargetOutput$">/dev/null <<<"$Output"&& return
+done
+return 1
+}
+
+function WriteConfigFile(){
+touch "$ConfigFile"||return 1
+[ -n "$Resolution" ]&& echo resolution "$Resolution" "$RefreshRate">"$ConfigFile"
+  
+echo success save config file `basename "$ConfigFile"`
+}
+
+function Save(){
+#echo Debug: save TargetOutput=$TargetOutput  >&2
+[ -z "$TargetOutput" ]&&{ echo specify output to save monitor config e.g. HDMI1 >&2;return 1; } 
+XrandrAnswer=`xrandr`
+FindOutputFolderForTargetOutput||{ echo 'unable to find output' >&2;return 1; }
+#Output defined in FindOutputFolderForTargetOutput
+GetResolutionAndRefreshRateOfOutput||{ echo 'unable to find resolution' >&2;return 1; }
+echo determined resolution "$Resolution" "$RefreshRate"
+GetConfigFileForOutputfolder||{ echo 'unable to define config file' >&2;return 1; }
+WriteConfigFile
+}
+
+function usage(){
+echo "This script watch the connections of the video outputs and applies the resolution stored in configuration's file. The configuration file is named as an monitor edid file hash. Also shows a notification."
+
+echo "	--list		write list for connected outputs and monitor's edid file info"
+echo "	--save		save monitor's config for specified output e.g. HDMI1"
+echo "	--delete	delete monitor's config for specified output"
+echo '	--applyonly	run configs for currently connected monitors and exit'
+echo '	--onlynew	run config files only for new connected monitors'
+echo '	--quet		no notify-send when run config'
+
+}
+
+function DeleteConfigFile(){
+if [ -f "$ConfigFile" ];then
+rm -fv "$ConfigFile" # && echo success save config file `basename "$ConfigFile"`
+else 
+echo no config file;return 1
+fi
+[ -n "$Resolution" ]&& echo resolution "$Resolution" "$RefreshRate">"$ConfigFile"
+}
+
+function DeleteConfig(){
+#echo Debug: Delete Config for TargetOutput=$TargetOutput  >&2
+[ -z "$TargetOutput" ]&&{ echo specify output to delete monitor config e.g. HDMI1 >&2;return 1; } 
+XrandrAnswer=`xrandr`
+FindOutputFolderForTargetOutput||{ echo 'unable to find output' >&2;return 1; }
+GetConfigFileForOutputfolder||{ echo 'unable to define config file' >&2;return 1; }
+DeleteConfigFile||return $?
+}
+
+
+#Разбор параметров
+check_common_commands()
+{
+    while [ $# -gt 0 ] ; do
+        parm="$1"
+        shift
+
+        case "$parm" in
+            --help) usage;exit;;
+
+            --quet) Quet=y;;
+
+            --applyonly) ApplyOnly=y;;
+			
+			--onlynew) OnlyNew=y;;
+			
+			--list) List;exit;;
+			
+			--save) TargetOutput=$1;Save;exit;;
+			
+			--delete) TargetOutput=$1;DeleteConfig;exit;;
+        esac
+    done
+}
+
+
+#-------------------------------Body
+check_common_commands "$@"
+
+#debug
+echo Debug: PID=$$ >&2
+echo Debug: ConfigDir="$ConfigDir" >&2
+#
+[ -n "$ApplyOnly" ]&&{ OnMonitorEvent;exit; }
+[ -n "$OnlyNew" ]&&GetCurrentConnected
+
+Watching
+#определяем подключенные мониторы
+# для всех подключенных перечитываем ConfigFile
+
+#+lisetining и определяем подключенные мониторы и определяем вновь подключенные с обновлением списка
+#Запуск события подключения для видео вывода
