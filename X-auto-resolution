@@ -1,5 +1,7 @@
 #!/bin/bash
 ProjectName='X-auto-resolution'
+YELLOW='\033[0;33m'
+NORMAL='\033[0m'
 DRM='/sys/class/drm/*'
 UseFullValues='Monitor name:|Manufacturer:|Maximum image size:|ASCII string:|Serial number:'
 
@@ -14,7 +16,7 @@ function Notify_First_Second(){
 function MD5SUM(){ MD5Hash=`md5sum "$1"`;echo ${MD5Hash%% *}; }
 
 function resolution(){
-#echo Debug: resolution 1=$1 2=$2 3=$3 >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} resolution 1=$1 2=$2 3=$3 ${NORMAL}>&2
 K=$(cvt $1 $2 $3)||return 1
 K=${K#*Modeline };K=${K//\"/}
 xrandr --newmode $K 2>/dev/null
@@ -40,7 +42,7 @@ Output=${Output%%-*}${Output##*-}
 
 
 function GetCurrentConnected(){
-#echo Debug: GetCurrentConnected  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} GetCurrentConnected ${NORMAL} >&2
 xrandr &>/dev/null
 CurrentConnected=''
 for A in $DRM/status;do
@@ -51,7 +53,7 @@ echo "$CurrentConnected"
 }
 
 function GetNewConnected(){
-#echo Debug: GetNewConnected
+[ -n "$Debug" ]&&echo -e ${YELLOW} GetNewConnected ${NORMAL}
 PrevConnected=$CurrentConnected
 #echo 'Prev Connected:'
 #echo "$PrevConnected"
@@ -65,18 +67,20 @@ echo "$NewConnected"
 }
 
 function GetMonitorNameFromOutputFolder(){
-#echo Debug: GetMonitorNameFromOutputFolder  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} GetMonitorNameFromOutputFolder ${NORMAL} >&2
 MonitorName=`edid-decode $OutputFolder/edid|grep -E "Monitor name:"`
 MonitorName=${MonitorName#*Monitor name: }
 }
 
 function RunConfigFile(){
-#echo Debug: RunConfigFile "$ConfigFile"  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} RunConfigFile "$ConfigFile" ${NORMAL} >&2
 while read ConfigLine;do $ConfigLine;done < "$ConfigFile"
+#XFCE bug escape
+[ $XDG_CURRENT_DESKTOP = XFCE ]&&nohup xfwm4 --replace &>/dev/null &
 }
 
 function GetResolutionAndRefreshRateOfOutput(){
-#echo Debug: GetResolutionAndRefreshRateOfOutput
+[ -n "$Debug" ]&&echo -e ${YELLOW} GetResolutionAndRefreshRateOfOutput ${NORMAL}
 Resolution='';RefreshRate=''
 BIFS=$IFS
 IFS=''
@@ -85,7 +89,7 @@ while [ -z "$Resolution" -a -z "$RefreshRate" ]&& read K;do
     Resolution=$(echo "$K"|grep -i "$Output"' connected'|grep -oE '[0-9]+x[0-9]+');
 	Resolution=${Resolution//x/ };
     while [ -z "$RefreshRate" ]&& read K&& [ ' ' = ${K:0:1} ];do
-	  [[ "$K" =~ '*' ]]&&{ #echo Debug: $K >&2;
+	  [[ "$K" =~ '*' ]]&&{ [ -n "$Debug" ]&&echo -e ${YELLOW} $K ${NORMAL} >&2;
 	    K=${K%%\**};RefreshRate=${K##* };IFS=$BIFS;return; }
 	done
   fi
@@ -95,8 +99,7 @@ IFS=$BIFS
  }
 
 function OnMonitorEvent(){
-#echo Debug: OnMonitorEvent >&2
-sleep 5 #Some TV's report the edid file after a few seconds. 
+[ -n "$Debug" ]&&echo -e ${YELLOW} OnMonitorEvent ${NORMAL} >&2
 GetNewConnected                      
 for OutputFolder in $NewConnected;do
   GetOutputForOutputfolder;GetConfigFileForOutputfolder
@@ -111,17 +114,18 @@ done
 }
 
 function Watching(){
-#echo Debug: Watching  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} Watching ${NORMAL} >&2
   #start watching
 stdbuf -i0 -o0 -e0 udevadm monitor -u -s drm|{ read;read;read
   while read;do
+    sleep 5 #Some TV's report the edid file after a few seconds. 
     OnMonitorEvent
   done
 }
 }
 
 function List(){
-#echo Debug: List of connected monitors:$'\n'  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} List of connected ${NORMAL} $'\n'  >&2
 GetCurrentConnected
 for OutputFolder in $CurrentConnected;do
 GetOutputForOutputfolder
@@ -137,7 +141,7 @@ done
 }
 
 function FindOutputFolderForTargetOutput(){
-#echo Debug: FindOutputFolderForTargetOutput TargetOutput=$TargetOutput  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} FindOutputFolderForTargetOutput TargetOutput=$TargetOutput ${NORMAL} >&2
 for OutputFolder in $DRM;do
   GetOutputForOutputfolder
   grep -i "^$TargetOutput$">/dev/null <<<"$Output"&& return
@@ -153,7 +157,7 @@ echo success save config file "$ConfigFile"
 }
 
 function Save(){
-#echo Debug: save TargetOutput=$TargetOutput  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} save TargetOutput=$TargetOutput ${NORMAL} >&2
 [ -z "$TargetOutput" ]&&{ echo specify output to save monitor config e.g. HDMI1 >&2;return 1; } 
 XrandrAnswer=`xrandr`
 FindOutputFolderForTargetOutput||{ echo 'unable to find output' >&2;return 1; }
@@ -173,6 +177,7 @@ echo "	--delete	delete monitor's config for specified output"
 echo '	--applyonly	run configs for currently connected monitors and exit'
 echo '	--onlynew	run config files only for new connected monitors'
 echo '	--quet		no notify-send when run config'
+echo '	--debug		output debug information'
 
 }
 
@@ -186,7 +191,7 @@ fi
 }
 
 function DeleteConfig(){
-#echo Debug: Delete Config for TargetOutput=$TargetOutput  >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} Delete Config for TargetOutput=$TargetOutput ${NORMAL} >&2
 [ -z "$TargetOutput" ]&&{ echo specify output to delete monitor config e.g. HDMI1 >&2;return 1; } 
 XrandrAnswer=`xrandr`
 FindOutputFolderForTargetOutput||{ echo 'unable to find output' >&2;return 1; }
@@ -202,19 +207,14 @@ check_common_commands()
         shift
 
         case "$parm" in
-            --help) usage;exit;;
-
-            --quet) Quet=y;;
-
-            --applyonly) ApplyOnly=y;;
-			
-			--onlynew) OnlyNew=y;;
-			
-			--list) List;exit;;
-			
-			--save) TargetOutput=$1;Save;exit;;
-			
-			--delete) TargetOutput=$1;DeleteConfig;exit;;
+		    --debug) Debug=y;;
+			--quet) Quet=y;;
+            --applyonly) ApplyOnly=y;;			
+			--onlynew) OnlyNew=y;;			
+			--list) ListOnly=y;;			
+			--save) TargetOutput=$1;Onlysave=y;;			
+			--delete) TargetOutput=$1;Deleteonly=y;;
+			--help) usage;exit;;
         esac
     done
 }
@@ -224,9 +224,12 @@ check_common_commands()
 check_common_commands "$@"
 
 #debug
-#echo Debug: PID=$$ >&2
-#echo Debug: ConfigDir="$ConfigDir" >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} PID=$$ >&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} ConfigDir="$ConfigDir" >&2
 #
+[ -n "$ListOnly" ]&&{ List;exit; }
+[ -n "$Onlysave" ]&&{ Save;exit; }
+[ -n "$Deleteonly" ]&&{ DeleteConfig;exit; }
 [ -n "$ApplyOnly" ]&&{ OnMonitorEvent;exit; }
 [ -n "$OnlyNew" ]&&GetCurrentConnected
 
