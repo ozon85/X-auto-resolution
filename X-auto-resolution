@@ -3,6 +3,7 @@ ProjectName='X-auto-resolution'
 YELLOW='\033[0;33m'
 NORMAL='\033[0m'
 DRM='/sys/class/drm/*'
+MaxSleepTime=2
 UseFullValues='Monitor name:|Manufacturer:|Maximum image size:|ASCII string:|Serial number:'
 
 ConfigDir=~/.config/$ProjectName
@@ -16,7 +17,7 @@ function Notify_First_Second(){
 function MD5SUM(){ MD5Hash=`md5sum "$1"`;echo ${MD5Hash%% *}; }
 
 function resolution(){
-[ -n "$Debug" ]&&echo -e ${YELLOW} resolution 1=$1 2=$2 3=$3 ${NORMAL}>&2
+[ -n "$Debug" ]&&echo -e ${YELLOW} resolution $1 $2 $3 ${NORMAL}>&2
 K=$(cvt $1 $2 $3)||return 1
 K=${K#*Modeline };K=${K//\"/}
 xrandr --newmode $K 2>/dev/null
@@ -66,6 +67,19 @@ echo 'New Connected:'
 echo "$NewConnected"
 }
 
+function GetEDIDSizeFromOutputFolder(){
+EDIDSize=`wc -c $OutputFolder/edid|cut -d' ' -f1`
+}
+
+function WaitEDIDFromOutputFolder(){
+GetEDIDSizeFromOutputFolder
+Slept=0
+while [ "$EDIDSize" -eq 0 ]&&[ $Slept -lt $MaxSleepTime ];do
+ sleep 1 && Slept=$((Slept+1))
+ GetEDIDSizeFromOutputFolder
+done
+}
+
 function GetMonitorNameFromOutputFolder(){
 [ -n "$Debug" ]&&echo -e ${YELLOW} GetMonitorNameFromOutputFolder ${NORMAL} >&2
 MonitorName=`edid-decode $OutputFolder/edid|grep -E "Monitor name:"`
@@ -74,9 +88,10 @@ MonitorName=${MonitorName#*Monitor name: }
 
 function RunConfigFile(){
 [ -n "$Debug" ]&&echo -e ${YELLOW} RunConfigFile "$ConfigFile" ${NORMAL} >&2
+Second=''
 while read ConfigLine;do $ConfigLine;done < "$ConfigFile"
 #XFCE bug escape
-[ $XDG_CURRENT_DESKTOP = XFCE ]&&nohup xfwm4 --replace &>/dev/null &
+[ $XDG_CURRENT_DESKTOP = XFCE ]&&{ nohup xfwm4 --replace &>/dev/null & }
 }
 
 function GetResolutionAndRefreshRateOfOutput(){
@@ -100,9 +115,11 @@ IFS=$BIFS
 
 function OnMonitorEvent(){
 [ -n "$Debug" ]&&echo -e ${YELLOW} OnMonitorEvent ${NORMAL} >&2
-GetNewConnected                      
+GetNewConnected                     
 for OutputFolder in $NewConnected;do
-  GetOutputForOutputfolder;GetConfigFileForOutputfolder
+  GetOutputForOutputfolder
+  WaitEDIDFromOutputFolder #Some TV's report the edid file after a few seconds.
+  GetConfigFileForOutputfolder
   GetMonitorNameFromOutputFolder
   #read config if exist
   [ -r "$ConfigFile" ]&&
@@ -116,9 +133,8 @@ done
 function Watching(){
 [ -n "$Debug" ]&&echo -e ${YELLOW} Watching ${NORMAL} >&2
   #start watching
-stdbuf -i0 -o0 -e0 udevadm monitor -u -s drm|{ read;read;read
-  while read;do
-    sleep 5 #Some TV's report the edid file after a few seconds. 
+stdbuf -i0 -o0 -e0 udevadm monitor -u -s drm|{ read;read
+  while read;do 
     OnMonitorEvent
   done
 }
@@ -207,14 +223,14 @@ check_common_commands()
         shift
 
         case "$parm" in
-		    --debug) Debug=y;;
-			--quet) Quet=y;;
+		    --debug) Debug=y;;			
+			--quet) Quet=y;;			
             --applyonly) ApplyOnly=y;;			
-			--onlynew) OnlyNew=y;;			
-			--list) ListOnly=y;;			
+			--onlynew) OnlyNew=y;;				
+			--list) ListOnly=y;;				
 			--save) TargetOutput=$1;Onlysave=y;;			
-			--delete) TargetOutput=$1;Deleteonly=y;;
-			--help) usage;exit;;
+			--delete) TargetOutput=$1;Deleteonly=y;;			
+			--help) usage;exit;;			
         esac
     done
 }
@@ -224,8 +240,11 @@ check_common_commands()
 check_common_commands "$@"
 
 #debug
-[ -n "$Debug" ]&&echo -e ${YELLOW} PID=$$ >&2
-[ -n "$Debug" ]&&echo -e ${YELLOW} ConfigDir="$ConfigDir" >&2
+[ -n "$Debug" ]&&{ echo -e ${YELLOW} PID=$$ ConfigDir="$ConfigDir" \
+    ApplyOnly=$ApplyOnly OnlyNew=$OnlyNew ListOnly=$ListOnly \
+	${NORMAL} >&2
+  
+}  
 #
 [ -n "$ListOnly" ]&&{ List;exit; }
 [ -n "$Onlysave" ]&&{ Save;exit; }
